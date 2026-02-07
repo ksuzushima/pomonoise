@@ -29,6 +29,14 @@ fn phase_color(phase: Phase) -> Color {
 
 /// Run the TUI event loop.
 pub fn run(mut state: AppState) -> Result<(), Box<dyn std::error::Error>> {
+    // Install panic hook to restore terminal state on panic
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = terminal::disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        original_hook(info);
+    }));
+
     terminal::enable_raw_mode()?;
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -36,7 +44,7 @@ pub fn run(mut state: AppState) -> Result<(), Box<dyn std::error::Error>> {
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut audio = AudioEngine::new();
+    let mut audio = AudioEngine::new()?;
     audio.start(state.noise, state.volume);
 
     let mut last_tick = Instant::now();

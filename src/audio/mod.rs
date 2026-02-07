@@ -14,15 +14,14 @@ pub struct AudioEngine {
 
 impl AudioEngine {
     /// Create a new AudioEngine (initializes the audio output stream).
-    pub fn new() -> Self {
-        let (_stream, stream_handle) =
-            OutputStream::try_default().expect("failed to open audio output stream");
-        Self {
+    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        let (_stream, stream_handle) = OutputStream::try_default()?;
+        Ok(Self {
             _stream,
             stream_handle,
             sink: None,
             current_volume: 0.5,
-        }
+        })
     }
 
     /// Start playing the specified noise at the given volume.
@@ -30,7 +29,13 @@ impl AudioEngine {
         self.stop();
         self.current_volume = volume;
 
-        let sink = Sink::try_new(&self.stream_handle).expect("failed to create audio sink");
+        let sink = match Sink::try_new(&self.stream_handle) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("audio: failed to create sink: {e}");
+                return;
+            }
+        };
         match noise {
             NoiseType::White => sink.append(WhiteNoiseSource::new()),
             NoiseType::Pink => sink.append(PinkNoiseSource::new()),
