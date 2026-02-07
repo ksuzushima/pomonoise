@@ -158,8 +158,30 @@ impl AppState {
     }
 
     /// Format noise and volume, e.g., "pink vol 0.50".
+    #[allow(dead_code)]
     pub fn noise_display(&self) -> String {
         format!("{} vol {:.2}", self.noise, self.volume)
+    }
+
+    /// Returns the elapsed fraction of the current phase (0.0 = just started, 1.0 = done).
+    pub fn progress(&self) -> f64 {
+        let total = match self.phase {
+            Phase::Work => self.work_duration,
+            Phase::Break => self.break_duration,
+        };
+        if total.is_zero() {
+            return 1.0;
+        }
+        1.0 - (self.remaining.as_secs_f64() / total.as_secs_f64())
+    }
+
+    /// Returns the duration of the current phase.
+    #[allow(dead_code)]
+    pub fn phase_duration(&self) -> Duration {
+        match self.phase {
+            Phase::Work => self.work_duration,
+            Phase::Break => self.break_duration,
+        }
     }
 }
 
@@ -456,5 +478,27 @@ mod tests {
         // Should have transitioned to Break
         assert_eq!(s.phase, Phase::Break);
         assert_eq!(s.remaining, Duration::from_secs(3));
+    }
+
+    #[test]
+    fn progress_at_start() {
+        let s = make_state(10, 5, 1);
+        assert!((s.progress() - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn progress_halfway() {
+        let mut s = make_state(10, 5, 1);
+        s.tick(Duration::from_secs(5));
+        assert!((s.progress() - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn progress_during_break() {
+        let mut s = make_state(10, 5, 2);
+        s.tick(Duration::from_secs(10)); // Work -> Break
+        assert!((s.progress() - 0.0).abs() < 0.01); // Break just started
+        s.tick(Duration::from_secs(3));
+        assert!((s.progress() - 0.6).abs() < 0.01); // 3/5 elapsed
     }
 }
