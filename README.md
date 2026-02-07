@@ -6,9 +6,10 @@ A minimal CLI/TUI Pomodoro timer with white, pink, and brown noise. Stay focused
 
 - **3 noise types** — white, pink (Voss-McCartney), and brown (random walk)
 - **Pomodoro cycle** — configurable work/break durations and number of sets
-- **TUI** — clean terminal UI showing timer, phase, noise type, and volume
+- **TUI** — big-text timer, progress bar, session dots, color-coded phases
 - **Keyboard controls** — pause, skip, change noise, adjust volume, quit
 - **Break = silence** — noise plays only during work phases
+- **Terminal friendly** — updates window title, bell on phase change, graceful error handling
 
 ## Installation
 
@@ -69,11 +70,19 @@ pomonoise --noise white --volume 0.2 --sets 1
 ## TUI Layout
 
 ```
-              25:00
-            WORK 1/4
-          pink vol 0.50
+              ██████╗ ██████╗ ██╗ ██████╗  ██████╗
+              ╚════██╗██╔════╝ ██║██╔═══██╗██╔═══██╗
+               █████╔╝██████╗  ██║██║   ██║██║   ██║
+              ██╔═══╝ ╚════██║ ██║██║   ██║██║   ██║
+              ███████╗██████╔╝ ██║╚██████╔╝╚██████╔╝
+              ╚══════╝╚═════╝  ╚═╝ ╚═════╝  ╚═════╝
 
-Space pause | n noise | +/- volume | s skip | q quit
+                    ━━━━━━━━━━━━━━━━━━━━━━
+
+              WORK   ● ○ ○ ○
+              ♪ pink  ▮▮▮▮▮▯▯▯▯▯
+
+         Space pause │ n noise │ ±vol │ s skip │ q quit
 ```
 
 ## License
