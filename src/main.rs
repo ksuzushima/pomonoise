@@ -33,7 +33,10 @@ fn parse_duration(s: &str) -> Result<std::time::Duration, String> {
     let s = s.trim();
     if let Some(mins) = s.strip_suffix('m') {
         let n: u64 = mins.parse().map_err(|_| format!("invalid duration: {s}"))?;
-        Ok(std::time::Duration::from_secs(n * 60))
+        let secs = n
+            .checked_mul(60)
+            .ok_or_else(|| format!("duration too large: {s}"))?;
+        Ok(std::time::Duration::from_secs(secs))
     } else if let Some(secs) = s.strip_suffix('s') {
         let n: u64 = secs.parse().map_err(|_| format!("invalid duration: {s}"))?;
         Ok(std::time::Duration::from_secs(n))
@@ -95,10 +98,54 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_duration_empty_string() {
+        assert!(parse_duration("").is_err());
+        assert!(parse_duration("  ").is_err());
+    }
+
+    #[test]
+    fn test_parse_duration_zero() {
+        assert_eq!(
+            parse_duration("0m").unwrap(),
+            std::time::Duration::from_secs(0)
+        );
+        assert_eq!(
+            parse_duration("0s").unwrap(),
+            std::time::Duration::from_secs(0)
+        );
+    }
+
+    #[test]
+    fn test_parse_duration_whitespace() {
+        assert_eq!(
+            parse_duration("  25m  ").unwrap(),
+            std::time::Duration::from_secs(25 * 60)
+        );
+    }
+
+    #[test]
+    fn test_parse_duration_overflow() {
+        // u64::MAX minutes would overflow when multiplied by 60
+        let huge = format!("{}m", u64::MAX);
+        assert!(parse_duration(&huge).is_err());
+    }
+
+    #[test]
+    fn test_parse_duration_suffix_only() {
+        assert!(parse_duration("m").is_err());
+        assert!(parse_duration("s").is_err());
+    }
+
+    #[test]
     fn test_parse_noise() {
         assert_eq!(parse_noise("white").unwrap(), app::NoiseType::White);
         assert_eq!(parse_noise("Pink").unwrap(), app::NoiseType::Pink);
         assert_eq!(parse_noise("BROWN").unwrap(), app::NoiseType::Brown);
         assert!(parse_noise("blue").is_err());
+    }
+
+    #[test]
+    fn test_parse_noise_empty() {
+        assert!(parse_noise("").is_err());
     }
 }
