@@ -161,3 +161,139 @@ impl rodio::Source for BrownNoiseSource {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rodio::Source;
+
+    const SAMPLE_COUNT: usize = 44100; // 1 second of audio
+
+    // --- White Noise ---
+
+    #[test]
+    fn white_noise_samples_in_range() {
+        let source = WhiteNoiseSource::new();
+        for sample in source.take(SAMPLE_COUNT) {
+            assert!(
+                (-1.0..=1.0).contains(&sample),
+                "white noise sample out of range: {sample}"
+            );
+        }
+    }
+
+    #[test]
+    fn white_noise_source_metadata() {
+        let source = WhiteNoiseSource::new();
+        assert_eq!(source.channels(), 1);
+        assert_eq!(source.sample_rate(), 44100);
+        assert_eq!(source.total_duration(), None);
+        assert_eq!(source.current_frame_len(), None);
+    }
+
+    #[test]
+    fn white_noise_mean_near_zero() {
+        let source = WhiteNoiseSource::new();
+        let samples: Vec<f32> = source.take(SAMPLE_COUNT).collect();
+        let mean: f32 = samples.iter().sum::<f32>() / samples.len() as f32;
+        assert!(
+            mean.abs() < 0.05,
+            "white noise mean too far from zero: {mean}"
+        );
+    }
+
+    // --- Pink Noise ---
+
+    #[test]
+    fn pink_noise_samples_in_range() {
+        let source = PinkNoiseSource::new();
+        for sample in source.take(SAMPLE_COUNT) {
+            assert!(
+                (-1.0..=1.0).contains(&sample),
+                "pink noise sample out of range: {sample}"
+            );
+        }
+    }
+
+    #[test]
+    fn pink_noise_source_metadata() {
+        let source = PinkNoiseSource::new();
+        assert_eq!(source.channels(), 1);
+        assert_eq!(source.sample_rate(), 44100);
+        assert_eq!(source.total_duration(), None);
+        assert_eq!(source.current_frame_len(), None);
+    }
+
+    #[test]
+    fn pink_noise_mean_near_zero() {
+        let source = PinkNoiseSource::new();
+        let samples: Vec<f32> = source.take(SAMPLE_COUNT).collect();
+        let mean: f32 = samples.iter().sum::<f32>() / samples.len() as f32;
+        assert!(
+            mean.abs() < 0.1,
+            "pink noise mean too far from zero: {mean}"
+        );
+    }
+
+    #[test]
+    fn pink_noise_lower_variance_than_white() {
+        let white: Vec<f32> = WhiteNoiseSource::new().take(SAMPLE_COUNT).collect();
+        let pink: Vec<f32> = PinkNoiseSource::new().take(SAMPLE_COUNT).collect();
+
+        let white_var: f32 = white.iter().map(|s| s * s).sum::<f32>() / white.len() as f32;
+        let pink_var: f32 = pink.iter().map(|s| s * s).sum::<f32>() / pink.len() as f32;
+
+        assert!(
+            pink_var < white_var,
+            "pink noise variance ({pink_var}) should be lower than white ({white_var})"
+        );
+    }
+
+    // --- Brown Noise ---
+
+    #[test]
+    fn brown_noise_samples_in_range() {
+        let source = BrownNoiseSource::new();
+        for sample in source.take(SAMPLE_COUNT) {
+            assert!(
+                (-1.0..=1.0).contains(&sample),
+                "brown noise sample out of range: {sample}"
+            );
+        }
+    }
+
+    #[test]
+    fn brown_noise_source_metadata() {
+        let source = BrownNoiseSource::new();
+        assert_eq!(source.channels(), 1);
+        assert_eq!(source.sample_rate(), 44100);
+        assert_eq!(source.total_duration(), None);
+        assert_eq!(source.current_frame_len(), None);
+    }
+
+    #[test]
+    fn brown_noise_starts_at_zero() {
+        let mut source = BrownNoiseSource::new();
+        let first = source.next().unwrap();
+        // First sample is 0.0 + random step, so within ±0.05
+        assert!(
+            first.abs() <= 0.05,
+            "brown noise should start near zero: {first}"
+        );
+    }
+
+    #[test]
+    fn brown_noise_consecutive_samples_close() {
+        let source = BrownNoiseSource::new();
+        let samples: Vec<f32> = source.take(1000).collect();
+        for window in samples.windows(2) {
+            let diff = (window[1] - window[0]).abs();
+            assert!(
+                diff <= 0.1,
+                "brown noise step too large: {diff} (from {} to {})",
+                window[0],
+                window[1]
+            );
+        }
+    }
+}

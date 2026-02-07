@@ -501,4 +501,21 @@ mod tests {
         s.tick(Duration::from_secs(3));
         assert!((s.progress() - 0.6).abs() < 0.01); // 3/5 elapsed
     }
+
+    #[test]
+    fn progress_with_zero_duration() {
+        let s = make_state(0, 0, 1);
+        // Zero duration should return 1.0 (completed)
+        assert!((s.progress() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn progress_at_completion() {
+        let mut s = make_state(10, 5, 1);
+        s.tick(Duration::from_secs(10)); // Work -> Break
+        s.tick(Duration::from_secs(5)); // Break -> finished
+        assert!(s.finished);
+        // Progress of a finished state (remaining=0, duration=break)
+        assert!((s.progress() - 1.0).abs() < 0.01);
+    }
 }
