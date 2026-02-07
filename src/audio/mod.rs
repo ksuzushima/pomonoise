@@ -15,8 +15,8 @@ pub struct AudioEngine {
 impl AudioEngine {
     /// Create a new AudioEngine (initializes the audio output stream).
     pub fn new() -> Self {
-        let (_stream, stream_handle) = OutputStream::try_default()
-            .expect("failed to open audio output stream");
+        let (_stream, stream_handle) =
+            OutputStream::try_default().expect("failed to open audio output stream");
         Self {
             _stream,
             stream_handle,
@@ -30,8 +30,7 @@ impl AudioEngine {
         self.stop();
         self.current_volume = volume;
 
-        let sink = Sink::try_new(&self.stream_handle)
-            .expect("failed to create audio sink");
+        let sink = Sink::try_new(&self.stream_handle).expect("failed to create audio sink");
         match noise {
             NoiseType::White => sink.append(WhiteNoiseSource::new()),
             NoiseType::Pink => sink.append(PinkNoiseSource::new()),

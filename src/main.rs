@@ -47,7 +47,9 @@ fn parse_noise(s: &str) -> Result<app::NoiseType, String> {
         "white" => Ok(app::NoiseType::White),
         "pink" => Ok(app::NoiseType::Pink),
         "brown" => Ok(app::NoiseType::Brown),
-        _ => Err(format!("unknown noise type: {s} (expected white, pink, or brown)")),
+        _ => Err(format!(
+            "unknown noise type: {s} (expected white, pink, or brown)"
+        )),
     }
 }
 
@@ -72,12 +74,18 @@ mod tests {
 
     #[test]
     fn test_parse_duration_minutes() {
-        assert_eq!(parse_duration("25m").unwrap(), std::time::Duration::from_secs(25 * 60));
+        assert_eq!(
+            parse_duration("25m").unwrap(),
+            std::time::Duration::from_secs(25 * 60)
+        );
     }
 
     #[test]
     fn test_parse_duration_seconds() {
-        assert_eq!(parse_duration("300s").unwrap(), std::time::Duration::from_secs(300));
+        assert_eq!(
+            parse_duration("300s").unwrap(),
+            std::time::Duration::from_secs(300)
+        );
     }
 
     #[test]

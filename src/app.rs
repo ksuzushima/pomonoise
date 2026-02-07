@@ -288,7 +288,7 @@ mod tests {
     fn tick_no_op_after_finished() {
         let mut s = make_state(10, 5, 1);
         s.tick(Duration::from_secs(10)); // Work -> Break
-        s.tick(Duration::from_secs(5));  // Break -> finished
+        s.tick(Duration::from_secs(5)); // Break -> finished
         assert!(s.finished);
 
         // Further ticks should be no-ops

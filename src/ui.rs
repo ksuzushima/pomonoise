@@ -4,10 +4,10 @@ use std::time::{Duration, Instant};
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+use ratatui::Terminal;
 use ratatui::layout::{Alignment, Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Paragraph;
-use ratatui::Terminal;
 
 use crate::app::{AppState, Phase, Status};
 use crate::audio::AudioEngine;
@@ -66,9 +66,7 @@ pub fn run(mut state: AppState) -> Result<(), Box<dyn std::error::Error>> {
                     if state.phase != old_phase || state.finished {
                         if state.phase == Phase::Break || state.finished {
                             audio.stop();
-                        } else if state.phase == Phase::Work
-                            && state.status == Status::Running
-                        {
+                        } else if state.phase == Phase::Work && state.status == Status::Running {
                             audio.start(state.noise, state.volume);
                         }
                     }
@@ -152,20 +150,19 @@ fn render(frame: &mut ratatui::Frame, state: &AppState) {
         .style(Style::default().fg(Color::Red))
         .alignment(Alignment::Center);
 
-    let footer_widget =
-        Paragraph::new("Space pause | n noise | +/- volume | s skip | q quit")
-            .style(Style::default().fg(Color::DarkGray))
-            .alignment(Alignment::Center);
+    let footer_widget = Paragraph::new("Space pause | n noise | +/- volume | s skip | q quit")
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center);
 
     // Layout: vertically centered with content in the middle
     let vertical = Layout::vertical([
-        Constraint::Fill(1),    // top spacer
-        Constraint::Length(1),  // time
-        Constraint::Length(1),  // phase
-        Constraint::Length(1),  // noise
-        Constraint::Length(1),  // status (paused indicator)
-        Constraint::Fill(1),    // bottom spacer
-        Constraint::Length(1),  // footer
+        Constraint::Fill(1),   // top spacer
+        Constraint::Length(1), // time
+        Constraint::Length(1), // phase
+        Constraint::Length(1), // noise
+        Constraint::Length(1), // status (paused indicator)
+        Constraint::Fill(1),   // bottom spacer
+        Constraint::Length(1), // footer
     ])
     .split(area);
 
