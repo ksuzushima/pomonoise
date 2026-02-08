@@ -13,7 +13,7 @@ A minimal CLI/TUI Pomodoro timer with white, pink, and brown noise. Stay focused
 
 ## Installation
 
-Requires [Rust](https://www.rust-lang.org/tools/install) (1.85+).
+Requires [Rust](https://www.rust-lang.org/tools/install) (1.88+). The `rust-toolchain.toml` will automatically select the correct version via rustup.
 
 ```bash
 cargo install --path .

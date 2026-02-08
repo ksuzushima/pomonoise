@@ -58,4 +58,4 @@ cargo fmt --check && cargo clippy -- -D warnings && cargo test
 
 ## Rust Edition
 
-Edition 2024 — requires Rust 1.85+.
+Edition 2024 — requires Rust 1.88+ (pinned via `rust-toolchain.toml`).
