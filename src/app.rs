@@ -1,3 +1,4 @@
+use std::num::NonZeroU32;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,11 +44,18 @@ impl std::fmt::Display for NoiseType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransitionEvent {
+    None,
+    PhaseChanged { from: Phase, to: Phase },
+    Finished,
+}
+
 pub struct AppState {
     pub phase: Phase,
     pub status: Status,
     pub set_index: u32,
-    pub sets: u32,
+    pub sets: NonZeroU32,
     pub remaining: Duration,
     pub noise: NoiseType,
     pub volume: f32,
@@ -60,7 +68,7 @@ impl AppState {
     pub fn new(
         work_duration: Duration,
         break_duration: Duration,
-        sets: u32,
+        sets: NonZeroU32,
         noise: NoiseType,
         volume: f32,
     ) -> Self {
@@ -79,16 +87,17 @@ impl AppState {
     }
 
     /// Advance the timer by `delta`. Only counts down when Running.
-    pub fn tick(&mut self, delta: Duration) {
+    pub fn tick(&mut self, delta: Duration) -> TransitionEvent {
         if self.finished || self.status != Status::Running {
-            return;
+            return TransitionEvent::None;
         }
 
         self.remaining = self.remaining.saturating_sub(delta);
 
         if self.remaining == Duration::ZERO {
-            self.transition();
+            return self.transition();
         }
+        TransitionEvent::None
     }
 
     /// Toggle pause/resume.
@@ -103,29 +112,37 @@ impl AppState {
     }
 
     /// Skip to the next phase immediately.
-    pub fn skip(&mut self) {
+    pub fn skip(&mut self) -> TransitionEvent {
         if self.finished {
-            return;
+            return TransitionEvent::None;
         }
-        self.transition();
+        self.transition()
     }
 
-    fn transition(&mut self) {
+    fn transition(&mut self) -> TransitionEvent {
         match self.phase {
             Phase::Work => {
                 self.phase = Phase::Break;
                 self.remaining = self.break_duration;
+                TransitionEvent::PhaseChanged {
+                    from: Phase::Work,
+                    to: Phase::Break,
+                }
             }
             Phase::Break => {
                 self.set_index += 1;
-                if self.set_index > self.sets {
+                if self.set_index > self.sets.get() {
                     self.finished = true;
                     self.status = Status::Paused;
                     self.remaining = Duration::ZERO;
-                    return;
+                    return TransitionEvent::Finished;
                 }
                 self.phase = Phase::Work;
                 self.remaining = self.work_duration;
+                TransitionEvent::PhaseChanged {
+                    from: Phase::Break,
+                    to: Phase::Work,
+                }
             }
         }
     }
@@ -154,7 +171,7 @@ impl AppState {
             Phase::Work => "WORK",
             Phase::Break => "BREAK",
         };
-        format!("{phase_str} {}/{}", self.set_index, self.sets)
+        format!("{phase_str} {}/{}", self.set_index, self.sets.get())
     }
 
     /// Format noise and volume, e.g., "pink vol 0.50".
@@ -193,7 +210,7 @@ mod tests {
         AppState::new(
             Duration::from_secs(work_secs),
             Duration::from_secs(break_secs),
-            sets,
+            NonZeroU32::new(sets).expect("test helper requires sets >= 1"),
             NoiseType::White,
             0.5,
         )
@@ -205,7 +222,7 @@ mod tests {
         assert_eq!(s.phase, Phase::Work);
         assert_eq!(s.status, Status::Running);
         assert_eq!(s.set_index, 1);
-        assert_eq!(s.sets, 4);
+        assert_eq!(s.sets.get(), 4);
         assert_eq!(s.remaining, Duration::from_secs(1500));
         assert!(!s.finished);
     }
@@ -236,7 +253,14 @@ mod tests {
     #[test]
     fn tick_work_to_break_transition() {
         let mut s = make_state(10, 5, 2);
-        s.tick(Duration::from_secs(10));
+        let event = s.tick(Duration::from_secs(10));
+        assert_eq!(
+            event,
+            TransitionEvent::PhaseChanged {
+                from: Phase::Work,
+                to: Phase::Break
+            }
+        );
         assert_eq!(s.phase, Phase::Break);
         assert_eq!(s.remaining, Duration::from_secs(5));
         assert_eq!(s.set_index, 1); // same set_index during break
@@ -247,12 +271,26 @@ mod tests {
     fn tick_break_to_work_transition() {
         let mut s = make_state(10, 5, 2);
         // Work -> Break
-        s.tick(Duration::from_secs(10));
+        let event = s.tick(Duration::from_secs(10));
+        assert_eq!(
+            event,
+            TransitionEvent::PhaseChanged {
+                from: Phase::Work,
+                to: Phase::Break
+            }
+        );
         assert_eq!(s.phase, Phase::Break);
         assert_eq!(s.set_index, 1);
 
         // Break -> Work
-        s.tick(Duration::from_secs(5));
+        let event = s.tick(Duration::from_secs(5));
+        assert_eq!(
+            event,
+            TransitionEvent::PhaseChanged {
+                from: Phase::Break,
+                to: Phase::Work
+            }
+        );
         assert_eq!(s.phase, Phase::Work);
         assert_eq!(s.remaining, Duration::from_secs(10));
         assert_eq!(s.set_index, 2);
@@ -298,11 +336,19 @@ mod tests {
         let mut s = make_state(10, 5, 1);
 
         // Work -> Break
-        s.tick(Duration::from_secs(10));
+        let event = s.tick(Duration::from_secs(10));
+        assert_eq!(
+            event,
+            TransitionEvent::PhaseChanged {
+                from: Phase::Work,
+                to: Phase::Break
+            }
+        );
         assert_eq!(s.phase, Phase::Break);
 
         // Break -> finished
-        s.tick(Duration::from_secs(5));
+        let event = s.tick(Duration::from_secs(5));
+        assert_eq!(event, TransitionEvent::Finished);
         assert!(s.finished);
     }
 
@@ -367,8 +413,16 @@ mod tests {
     #[test]
     fn skip_last_break_finishes() {
         let mut s = make_state(10, 5, 1);
-        s.skip(); // Work -> Break
-        s.skip(); // Break -> finished
+        let event = s.skip(); // Work -> Break
+        assert_eq!(
+            event,
+            TransitionEvent::PhaseChanged {
+                from: Phase::Work,
+                to: Phase::Break
+            }
+        );
+        let event = s.skip(); // Break -> finished
+        assert_eq!(event, TransitionEvent::Finished);
         assert!(s.finished);
     }
 
