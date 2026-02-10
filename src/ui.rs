@@ -12,7 +12,7 @@ use ratatui::symbols;
 use ratatui::widgets::{LineGauge, Paragraph};
 use tui_big_text::{BigText, PixelSize};
 
-use crate::app::{AppState, Phase, Status};
+use crate::app::{AppState, Phase, Status, TransitionEvent};
 use crate::audio::AudioEngine;
 
 const COLOR_WORK: Color = Color::Rgb(0, 255, 136);
@@ -27,20 +27,28 @@ fn phase_color(phase: Phase) -> Color {
     }
 }
 
-/// Run the TUI event loop.
-pub fn run(mut state: AppState) -> Result<(), Box<dyn std::error::Error>> {
-    // Install panic hook to restore terminal state on panic
-    let original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
+struct TerminalGuard;
+
+impl TerminalGuard {
+    fn enter() -> Result<Self, Box<dyn std::error::Error>> {
+        terminal::enable_raw_mode()?;
+        execute!(io::stdout(), EnterAlternateScreen)?;
+        Ok(Self)
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = execute!(io::stdout(), SetTitle(""));
         let _ = terminal::disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
-        original_hook(info);
-    }));
+    }
+}
 
-    terminal::enable_raw_mode()?;
-    let mut stdout = stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-
+/// Run the TUI event loop.
+pub fn run(mut state: AppState) -> Result<(), Box<dyn std::error::Error>> {
+    let _terminal_guard = TerminalGuard::enter()?;
+    let stdout = stdout();
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -91,32 +99,24 @@ pub fn run(mut state: AppState) -> Result<(), Box<dyn std::error::Error>> {
                     audio.set_volume(state.volume);
                 }
                 KeyCode::Char('s') => {
-                    let old_phase = state.phase;
-                    state.skip();
-                    handle_phase_change(old_phase, &state, &mut audio);
+                    let event = state.skip();
+                    handle_transition_event(event, &state, &mut audio);
                 }
                 _ => {}
             }
         }
 
         // Tick timer
+        let now = Instant::now();
         if state.status == Status::Running {
-            let now = Instant::now();
             let delta = now.duration_since(last_tick);
-            let phase_before = state.phase;
-            state.tick(delta);
-
-            if state.phase != phase_before {
-                // Bell on phase transition
-                let _ = execute!(io::stdout(), Print("\x07"));
-                handle_phase_change(phase_before, &state, &mut audio);
-            }
+            let event = state.tick(delta);
+            handle_transition_event(event, &state, &mut audio);
         }
-        last_tick = Instant::now();
+        last_tick = now;
 
         if state.finished {
-            audio.stop();
-            let _ = execute!(io::stdout(), Print("\x07"));
+            audio.stop(); // idempotent safety if finished state is externally injected
             // Show completion screen
             terminal.draw(render_completion)?;
             // Wait for any key
@@ -131,21 +131,23 @@ pub fn run(mut state: AppState) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Cleanup
-    audio.stop();
-    execute!(io::stdout(), SetTitle(""))?;
-    terminal::disable_raw_mode()?;
-    execute!(io::stdout(), LeaveAlternateScreen)?;
-
     Ok(())
 }
 
-fn handle_phase_change(old_phase: Phase, state: &AppState, audio: &mut AudioEngine) {
-    if state.phase != old_phase || state.finished {
-        if state.phase == Phase::Break || state.finished {
+fn handle_transition_event(event: TransitionEvent, state: &AppState, audio: &mut AudioEngine) {
+    match event {
+        TransitionEvent::None => {}
+        TransitionEvent::PhaseChanged { to, .. } => {
+            let _ = execute!(io::stdout(), Print("\x07"));
+            if to == Phase::Break {
+                audio.stop();
+            } else if to == Phase::Work && state.status == Status::Running {
+                audio.start(state.noise, state.volume);
+            }
+        }
+        TransitionEvent::Finished => {
             audio.stop();
-        } else if state.phase == Phase::Work && state.status == Status::Running {
-            audio.start(state.noise, state.volume);
+            let _ = execute!(io::stdout(), Print("\x07"));
         }
     }
 }
@@ -184,18 +186,16 @@ fn render(frame: &mut ratatui::Frame, state: &AppState) {
         Phase::Work => "WORK",
         Phase::Break => "BREAK",
     };
-    let dots: String = (1..=state.sets)
-        .map(|i| if i <= state.set_index { "●" } else { "○" })
-        .collect::<Vec<_>>()
-        .join(" ");
+    let phase_text = format!("{phase_label} {}/{}", state.set_index, state.sets.get());
+    let dots = session_dots(state.set_index, state.sets.get());
 
     let mut phase_spans = vec![
         ratatui::text::Span::styled(
-            phase_label,
+            phase_text,
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
         ratatui::text::Span::raw("   "),
-        ratatui::text::Span::styled(&dots, Style::default().fg(color)),
+        ratatui::text::Span::styled(dots, Style::default().fg(color)),
     ];
     if state.status == Status::Paused {
         phase_spans.push(ratatui::text::Span::raw("   "));
@@ -255,6 +255,29 @@ fn render(frame: &mut ratatui::Frame, state: &AppState) {
     frame.render_widget(footer, vertical[8]);
 }
 
+fn session_dots(set_index: u32, sets: u32) -> String {
+    const MAX_VISIBLE_DOTS: u32 = 20;
+    if sets == 0 {
+        return "—".to_string();
+    }
+
+    if sets <= MAX_VISIBLE_DOTS {
+        return (1..=sets)
+            .map(|i| if i <= set_index { "●" } else { "○" })
+            .collect::<Vec<_>>()
+            .join(" ");
+    }
+
+    let visible_completed = (((set_index.min(sets) as f64 / sets as f64) * MAX_VISIBLE_DOTS as f64)
+        .round() as u32)
+        .clamp(0, MAX_VISIBLE_DOTS);
+    let dots = (1..=MAX_VISIBLE_DOTS)
+        .map(|i| if i <= visible_completed { "●" } else { "○" })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("{dots} +{}", sets - MAX_VISIBLE_DOTS)
+}
+
 fn render_completion(frame: &mut ratatui::Frame) {
     let area = frame.area();
 
@@ -290,4 +313,25 @@ fn render_completion(frame: &mut ratatui::Frame) {
     frame.render_widget(done_text, vertical[1]);
     frame.render_widget(subtitle, vertical[3]);
     frame.render_widget(hint, vertical[4]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::session_dots;
+
+    #[test]
+    fn session_dots_small_set_count() {
+        assert_eq!(session_dots(2, 4), "● ● ○ ○");
+    }
+
+    #[test]
+    fn session_dots_large_set_count_is_capped() {
+        let dots = session_dots(40, 100);
+        assert!(dots.contains("+80"));
+    }
+
+    #[test]
+    fn session_dots_zero_sets_fallback() {
+        assert_eq!(session_dots(1, 0), "—");
+    }
 }
