@@ -2,6 +2,10 @@ use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;
 
+/// All noise sources are mono and run at a CD-quality sample rate.
+const SAMPLE_RATE: u32 = 44100;
+const CHANNELS: u16 = 1;
+
 // ---------------------------------------------------------------------------
 // White Noise
 // ---------------------------------------------------------------------------
@@ -32,11 +36,11 @@ impl rodio::Source for WhiteNoiseSource {
     }
 
     fn channels(&self) -> u16 {
-        1
+        CHANNELS
     }
 
     fn sample_rate(&self) -> u32 {
-        44100
+        SAMPLE_RATE
     }
 
     fn total_duration(&self) -> Option<Duration> {
@@ -104,11 +108,11 @@ impl rodio::Source for PinkNoiseSource {
     }
 
     fn channels(&self) -> u16 {
-        1
+        CHANNELS
     }
 
     fn sample_rate(&self) -> u32 {
-        44100
+        SAMPLE_RATE
     }
 
     fn total_duration(&self) -> Option<Duration> {
@@ -117,8 +121,16 @@ impl rodio::Source for PinkNoiseSource {
 }
 
 // ---------------------------------------------------------------------------
-// Brown Noise (random walk)
+// Brown Noise (leaky-integrated random walk)
 // ---------------------------------------------------------------------------
+
+/// Random-walk step half-width applied each sample.
+const BROWN_STEP: f32 = 0.05;
+/// Leak factor (slightly below 1.0) applied to the running value each sample.
+/// It pulls the walk gently back toward zero, preventing DC drift and stopping
+/// the value from getting pinned at the ±1.0 clamp over long runs (which would
+/// otherwise flatten the sound into long constant segments).
+const BROWN_LEAK: f32 = 0.995;
 
 pub struct BrownNoiseSource {
     rng: SmallRng,
@@ -138,8 +150,8 @@ impl Iterator for BrownNoiseSource {
     type Item = f32;
 
     fn next(&mut self) -> Option<f32> {
-        self.x += self.rng.random_range(-0.05f32..0.05f32);
-        self.x = self.x.clamp(-1.0, 1.0);
+        let step = self.rng.random_range(-BROWN_STEP..BROWN_STEP);
+        self.x = (self.x * BROWN_LEAK + step).clamp(-1.0, 1.0);
         Some(self.x)
     }
 }
@@ -150,11 +162,11 @@ impl rodio::Source for BrownNoiseSource {
     }
 
     fn channels(&self) -> u16 {
-        1
+        CHANNELS
     }
 
     fn sample_rate(&self) -> u32 {
-        44100
+        SAMPLE_RATE
     }
 
     fn total_duration(&self) -> Option<Duration> {
@@ -275,9 +287,9 @@ mod tests {
     fn brown_noise_starts_at_zero() {
         let mut source = BrownNoiseSource::new();
         let first = source.next().unwrap();
-        // First sample is 0.0 + random step, so within ±0.05
+        // First sample is 0.0 * leak + step, so within ±BROWN_STEP.
         assert!(
-            first.abs() <= 0.05,
+            first.abs() <= BROWN_STEP,
             "brown noise should start near zero: {first}"
         );
     }
@@ -295,5 +307,34 @@ mod tests {
                 window[1]
             );
         }
+    }
+
+    #[test]
+    fn brown_noise_no_dc_drift() {
+        // The leaky integrator keeps the long-run average near zero. A pure
+        // random walk is free to wander far from the origin over this many
+        // samples, so this guards the leak that distinguishes the two.
+        let source = BrownNoiseSource::new();
+        let samples: Vec<f32> = source.take(SAMPLE_COUNT * 5).collect();
+        let mean = samples.iter().sum::<f32>() / samples.len() as f32;
+        assert!(
+            mean.abs() < 0.1,
+            "brown noise drifted from zero: mean = {mean}"
+        );
+    }
+
+    #[test]
+    fn brown_noise_rarely_hits_clamp() {
+        // With the leak pulling values back toward zero, the walk almost never
+        // reaches the ±1.0 clamp, avoiding the long flat segments a clamped
+        // pure random walk would produce.
+        let source = BrownNoiseSource::new();
+        let samples: Vec<f32> = source.take(SAMPLE_COUNT * 5).collect();
+        let clamped = samples.iter().filter(|s| s.abs() >= 1.0).count();
+        let ratio = clamped as f64 / samples.len() as f64;
+        assert!(
+            ratio < 0.01,
+            "brown noise hits the clamp too often: {ratio}"
+        );
     }
 }
