@@ -169,14 +169,24 @@ pub fn run(mut state: AppState) -> Result<(), Box<dyn std::error::Error>> {
         if state.finished {
             audio.stop(); // idempotent safety if finished state is externally injected
             terminal.draw(render_completion)?;
-            // Wait for any key press (ignoring key-release events on Windows).
-            loop {
+            // On the completion screen, `r` restarts the session; any other
+            // key quits. (Ignore key-release events on Windows.)
+            let restart = loop {
                 if event::poll(POLL_TIMEOUT)?
                     && let Event::Key(key) = event::read()?
                     && key.kind == KeyEventKind::Press
                 {
-                    break;
+                    break matches!(key.code, KeyCode::Char('r'));
                 }
+            };
+            if restart {
+                state.reset();
+                audio.start(state.noise, state.volume);
+                // Reset the tick clock so the idle time spent on the completion
+                // screen isn't subtracted from the fresh session in one go.
+                last_tick = Instant::now();
+                last_snapshot = None;
+                continue;
             }
             break;
         }
@@ -405,7 +415,7 @@ fn render_completion(frame: &mut ratatui::Frame) {
         )
         .alignment(Alignment::Center);
 
-    let hint = Paragraph::new("press any key to exit")
+    let hint = Paragraph::new("r restart  ·  any other key to exit")
         .style(Style::default().fg(COLOR_DIM))
         .alignment(Alignment::Center);
 

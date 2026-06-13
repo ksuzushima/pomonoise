@@ -119,14 +119,17 @@ impl AppState {
         self.transition()
     }
 
-    /// Reset the session back to the very beginning (Work, set 1, Running).
-    /// Keeps the user's current noise and volume choices.
+    /// Reset the session back to the very beginning (Work, set 1, Running),
+    /// keeping the user's current durations, set count, noise, and volume.
+    /// Rebuilds from `new` so the initial state lives in exactly one place.
     pub fn reset(&mut self) {
-        self.phase = Phase::Work;
-        self.status = Status::Running;
-        self.set_index = 1;
-        self.remaining = self.work_duration;
-        self.finished = false;
+        *self = Self::new(
+            self.work_duration,
+            self.break_duration,
+            self.sets,
+            self.noise,
+            self.volume,
+        );
     }
 
     fn transition(&mut self) -> TransitionEvent {

@@ -57,7 +57,7 @@ cargo fmt --check && cargo clippy -- -D warnings && cargo test
 - **Layout** uses vertically centered constraints with a horizontal sub-layout for the progress bar (60% width, centered).
 - **tui-big-text compatibility:** `tui-big-text` 0.8 requires `ratatui` 0.30+ (uses `ratatui-core` 0.1). These versions must stay in sync.
 - **Terminal title** is updated via `crossterm::terminal::SetTitle` only when the snapshot changes (alongside the redraw), and cleared on exit.
-- **Completion screen** is a separate render function (`render_completion`) that blocks until any key is pressed.
+- **Completion screen** is a separate render function (`render_completion`) that blocks until a key is pressed; `r` restarts the session (re-entering the main loop), any other key quits.
 
 ## Rust Edition
 
