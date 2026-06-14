@@ -1,24 +1,60 @@
 use std::io::{self, stdout};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::style::Print;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen, SetTitle};
 use ratatui::Terminal;
-use ratatui::layout::{Alignment, Constraint, Layout};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols;
-use ratatui::widgets::{LineGauge, Paragraph};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, LineGauge, Paragraph};
 use tui_big_text::{BigText, PixelSize};
 
-use crate::app::{AppState, Phase, Status, TransitionEvent};
+use crate::app::{AppState, NoiseType, Phase, Status, TransitionEvent};
 use crate::audio::AudioEngine;
 
 const COLOR_WORK: Color = Color::Rgb(0, 255, 136);
 const COLOR_BREAK: Color = Color::Rgb(100, 180, 255);
 const COLOR_PAUSED: Color = Color::Rgb(255, 100, 100);
 const COLOR_DIM: Color = Color::DarkGray;
+
+/// Event-poll timeout. Bounds key-input latency without busy-looping; the
+/// actual redraw cadence is driven by `RenderSnapshot` changes, not by this.
+const POLL_TIMEOUT: Duration = Duration::from_millis(100);
+/// Volume increment applied per keypress.
+const VOLUME_STEP: f32 = 0.05;
+
+/// Snapshot of everything that affects the rendered frame. The UI loop redraws
+/// (and updates the terminal title) only when this changes, so an idle timer
+/// costs one cheap comparison per poll instead of a full repaint ten times a
+/// second.
+#[derive(PartialEq)]
+struct RenderSnapshot {
+    remaining_secs: u64,
+    phase: Phase,
+    status: Status,
+    set_index: u32,
+    noise: NoiseType,
+    volume: f32,
+    help_visible: bool,
+}
+
+impl RenderSnapshot {
+    fn capture(state: &AppState, help_visible: bool) -> Self {
+        Self {
+            remaining_secs: state.remaining.as_secs(),
+            phase: state.phase,
+            status: state.status,
+            set_index: state.set_index,
+            noise: state.noise,
+            volume: state.volume,
+            help_visible,
+        }
+    }
+}
 
 fn phase_color(phase: Phase) -> Color {
     match phase {
@@ -56,57 +92,72 @@ pub fn run(mut state: AppState) -> Result<(), Box<dyn std::error::Error>> {
     audio.start(state.noise, state.volume);
 
     let mut last_tick = Instant::now();
+    let mut help_visible = false;
+    let mut last_snapshot: Option<RenderSnapshot> = None;
 
     loop {
-        // Update terminal title
-        let title = format!(
-            "{} {} - pomonoise",
-            state.remaining_display(),
-            state.phase_display()
-        );
-        execute!(io::stdout(), SetTitle(&title))?;
+        // Redraw (and re-title) only when something visible changed. Between
+        // one-second ticks nothing changes, so an idle loop just polls.
+        let snapshot = RenderSnapshot::capture(&state, help_visible);
+        if last_snapshot.as_ref() != Some(&snapshot) {
+            let title = format!(
+                "{} {} - pomonoise",
+                state.remaining_display(),
+                state.phase_display()
+            );
+            execute!(io::stdout(), SetTitle(&title))?;
+            terminal.draw(|frame| render(frame, &state, help_visible))?;
+            last_snapshot = Some(snapshot);
+        }
 
-        // Render
-        terminal.draw(|frame| render(frame, &state))?;
-
-        // Poll events with ~100ms timeout
-        let timeout = Duration::from_millis(100);
-        if event::poll(timeout)?
-            && let Event::Key(key) = event::read()?
-        {
-            match key.code {
-                KeyCode::Char('q') => break,
-                KeyCode::Char(' ') => {
-                    state.toggle_pause();
-                    if state.status == Status::Paused {
-                        audio.stop();
-                    } else if state.phase == Phase::Work {
+        // Poll events, bounding input latency without busy-looping.
+        if event::poll(POLL_TIMEOUT)? {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                    KeyCode::Char('q') => break,
+                    KeyCode::Char('?') | KeyCode::Char('h') => {
+                        help_visible = !help_visible;
+                    }
+                    KeyCode::Char(' ') => {
+                        state.toggle_pause();
+                        if state.status == Status::Paused {
+                            audio.stop();
+                        } else if state.phase == Phase::Work {
+                            audio.start(state.noise, state.volume);
+                        }
+                    }
+                    KeyCode::Char('n') => {
+                        state.cycle_noise();
+                        if state.status == Status::Running && state.phase == Phase::Work {
+                            audio.set_noise(state.noise);
+                        }
+                    }
+                    KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Up => {
+                        state.adjust_volume(VOLUME_STEP);
+                        audio.set_volume(state.volume);
+                    }
+                    KeyCode::Char('-') | KeyCode::Down => {
+                        state.adjust_volume(-VOLUME_STEP);
+                        audio.set_volume(state.volume);
+                    }
+                    KeyCode::Char('s') => {
+                        let event = state.skip();
+                        handle_transition_event(event, &state, &mut audio);
+                    }
+                    KeyCode::Char('r') => {
+                        state.reset();
+                        // Back in Work/Running, so resume noise immediately.
                         audio.start(state.noise, state.volume);
                     }
-                }
-                KeyCode::Char('n') => {
-                    state.cycle_noise();
-                    if state.status == Status::Running && state.phase == Phase::Work {
-                        audio.set_noise(state.noise);
-                    }
-                }
-                KeyCode::Char('+') | KeyCode::Char('=') => {
-                    state.adjust_volume(0.05);
-                    audio.set_volume(state.volume);
-                }
-                KeyCode::Char('-') => {
-                    state.adjust_volume(-0.05);
-                    audio.set_volume(state.volume);
-                }
-                KeyCode::Char('s') => {
-                    let event = state.skip();
-                    handle_transition_event(event, &state, &mut audio);
-                }
+                    _ => {}
+                },
+                // Force a repaint on the next iteration after a resize.
+                Event::Resize(_, _) => last_snapshot = None,
                 _ => {}
             }
         }
 
-        // Tick timer
+        // Tick timer.
         let now = Instant::now();
         if state.status == Status::Running {
             let delta = now.duration_since(last_tick);
@@ -117,15 +168,25 @@ pub fn run(mut state: AppState) -> Result<(), Box<dyn std::error::Error>> {
 
         if state.finished {
             audio.stop(); // idempotent safety if finished state is externally injected
-            // Show completion screen
             terminal.draw(render_completion)?;
-            // Wait for any key
-            loop {
-                if event::poll(Duration::from_millis(100))?
-                    && let Event::Key(_) = event::read()?
+            // On the completion screen, `r` restarts the session; any other
+            // key quits. (Ignore key-release events on Windows.)
+            let restart = loop {
+                if event::poll(POLL_TIMEOUT)?
+                    && let Event::Key(key) = event::read()?
+                    && key.kind == KeyEventKind::Press
                 {
-                    break;
+                    break matches!(key.code, KeyCode::Char('r'));
                 }
+            };
+            if restart {
+                state.reset();
+                audio.start(state.noise, state.volume);
+                // Reset the tick clock so the idle time spent on the completion
+                // screen isn't subtracted from the fresh session in one go.
+                last_tick = Instant::now();
+                last_snapshot = None;
+                continue;
             }
             break;
         }
@@ -152,7 +213,7 @@ fn handle_transition_event(event: TransitionEvent, state: &AppState, audio: &mut
     }
 }
 
-fn render(frame: &mut ratatui::Frame, state: &AppState) {
+fn render(frame: &mut ratatui::Frame, state: &AppState, help_visible: bool) {
     let area = frame.area();
     let color = phase_color(state.phase);
 
@@ -222,9 +283,10 @@ fn render(frame: &mut ratatui::Frame, state: &AppState) {
         Paragraph::new(ratatui::text::Line::from(noise_spans)).alignment(Alignment::Center);
 
     // Footer
-    let footer = Paragraph::new("Space pause │ n noise │ ±vol │ s skip │ q quit")
-        .style(Style::default().fg(COLOR_DIM))
-        .alignment(Alignment::Center);
+    let footer =
+        Paragraph::new("Space pause │ n noise │ ±vol │ s skip │ r reset │ ? help │ q quit")
+            .style(Style::default().fg(COLOR_DIM))
+            .alignment(Alignment::Center);
 
     // Layout
     let vertical = Layout::vertical([
@@ -253,6 +315,10 @@ fn render(frame: &mut ratatui::Frame, state: &AppState) {
     frame.render_widget(phase_widget, vertical[5]);
     frame.render_widget(noise_widget, vertical[6]);
     frame.render_widget(footer, vertical[8]);
+
+    if help_visible {
+        render_help(frame, area);
+    }
 }
 
 fn session_dots(set_index: u32, sets: u32) -> String {
@@ -278,6 +344,59 @@ fn session_dots(set_index: u32, sets: u32) -> String {
     format!("{dots} +{}", sets - MAX_VISIBLE_DOTS)
 }
 
+/// Build one "key   description" row for the help overlay.
+fn help_line(key: &'static str, desc: &'static str) -> Line<'static> {
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled(
+            format!("{key:<11}"),
+            Style::default().fg(COLOR_WORK).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(desc, Style::default().fg(Color::White)),
+    ])
+}
+
+/// Compute a `width`×`height` rectangle centered within `area`, clamped to fit.
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    }
+}
+
+/// Render the help overlay as a centered popup over the current frame.
+fn render_help(frame: &mut ratatui::Frame, area: Rect) {
+    let lines = vec![
+        Line::from(""),
+        help_line("Space", "pause / resume"),
+        help_line("n", "cycle noise"),
+        help_line("+ / = / Up", "volume up"),
+        help_line("- / Down", "volume down"),
+        help_line("s", "skip phase"),
+        help_line("r", "reset session"),
+        help_line("? / h", "toggle this help"),
+        help_line("q", "quit"),
+        Line::from(""),
+    ];
+
+    let height = lines.len() as u16 + 2; // + top/bottom border
+    let popup = centered_rect(36, height, area);
+
+    let block = Block::default()
+        .title(" keys ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(COLOR_WORK));
+
+    frame.render_widget(Clear, popup);
+    frame.render_widget(Paragraph::new(lines).block(block), popup);
+}
+
 fn render_completion(frame: &mut ratatui::Frame) {
     let area = frame.area();
 
@@ -296,7 +415,7 @@ fn render_completion(frame: &mut ratatui::Frame) {
         )
         .alignment(Alignment::Center);
 
-    let hint = Paragraph::new("press any key to exit")
+    let hint = Paragraph::new("r restart  ·  any other key to exit")
         .style(Style::default().fg(COLOR_DIM))
         .alignment(Alignment::Center);
 

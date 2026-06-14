@@ -119,6 +119,19 @@ impl AppState {
         self.transition()
     }
 
+    /// Reset the session back to the very beginning (Work, set 1, Running),
+    /// keeping the user's current durations, set count, noise, and volume.
+    /// Rebuilds from `new` so the initial state lives in exactly one place.
+    pub fn reset(&mut self) {
+        *self = Self::new(
+            self.work_duration,
+            self.break_duration,
+            self.sets,
+            self.noise,
+            self.volume,
+        );
+    }
+
     fn transition(&mut self) -> TransitionEvent {
         match self.phase {
             Phase::Work => {
@@ -433,6 +446,46 @@ mod tests {
         let phase_before = s.phase;
         s.skip();
         assert_eq!(s.phase, phase_before); // no change
+    }
+
+    #[test]
+    fn reset_from_mid_session() {
+        let mut s = make_state(10, 5, 4);
+        s.tick(Duration::from_secs(10)); // Work -> Break
+        s.tick(Duration::from_secs(2)); // partway through break
+        s.toggle_pause();
+        s.reset();
+        assert_eq!(s.phase, Phase::Work);
+        assert_eq!(s.status, Status::Running);
+        assert_eq!(s.set_index, 1);
+        assert_eq!(s.remaining, Duration::from_secs(10));
+        assert!(!s.finished);
+    }
+
+    #[test]
+    fn reset_from_finished() {
+        let mut s = make_state(10, 5, 1);
+        s.tick(Duration::from_secs(10)); // Work -> Break
+        s.tick(Duration::from_secs(5)); // Break -> finished
+        assert!(s.finished);
+
+        s.reset();
+        assert!(!s.finished);
+        assert_eq!(s.phase, Phase::Work);
+        assert_eq!(s.status, Status::Running);
+        assert_eq!(s.set_index, 1);
+        assert_eq!(s.remaining, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn reset_preserves_noise_and_volume() {
+        let mut s = make_state(10, 5, 2);
+        s.cycle_noise(); // White -> Pink
+        s.adjust_volume(0.2); // 0.5 -> 0.7
+        s.skip(); // advance away from the start
+        s.reset();
+        assert_eq!(s.noise, NoiseType::Pink);
+        assert!((s.volume - 0.7).abs() < f32::EPSILON);
     }
 
     #[test]

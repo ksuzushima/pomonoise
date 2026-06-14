@@ -4,11 +4,12 @@ A minimal CLI/TUI Pomodoro timer with white, pink, and brown noise. Stay focused
 
 ## Features
 
-- **3 noise types** — white, pink (Voss-McCartney), and brown (random walk)
+- **3 noise types** — white, pink (Voss-McCartney), and brown (leaky-integrated random walk)
 - **Pomodoro cycle** — configurable work/break durations and number of sets
 - **TUI** — big-text timer, progress bar, session dots, color-coded phases
-- **Keyboard controls** — pause, skip, change noise, adjust volume, quit
+- **Keyboard controls** — pause, skip, reset, change noise, adjust volume, in-app help
 - **Break = silence** — noise plays only during work phases
+- **Low idle CPU** — repaints only when the display actually changes, not on a fixed interval
 - **Terminal friendly** — updates window title, bell on phase change, graceful error handling
 
 ## Installation
@@ -62,9 +63,11 @@ pomonoise --noise white --volume 0.2 --sets 1
 |---|---|
 | `Space` | Pause / Resume (audio follows) |
 | `n` | Cycle noise type (white → pink → brown) |
-| `+` / `=` | Volume up (+0.05) |
-| `-` | Volume down (-0.05) |
+| `+` / `=` / `↑` | Volume up (+0.05) |
+| `-` / `↓` | Volume down (-0.05) |
 | `s` | Skip to next phase |
+| `r` | Reset session to the start |
+| `?` / `h` | Toggle the in-app help overlay |
 | `q` | Quit |
 
 ## TUI Layout
@@ -82,7 +85,7 @@ pomonoise --noise white --volume 0.2 --sets 1
               WORK   ● ○ ○ ○
               ♪ pink  ▮▮▮▮▮▯▯▯▯▯
 
-         Space pause │ n noise │ ±vol │ s skip │ q quit
+   Space pause │ n noise │ ±vol │ s skip │ r reset │ ? help │ q quit
 ```
 
 ## License
